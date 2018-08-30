@@ -1,0 +1,41 @@
+use std
+use json
+
+const main = {
+	std.put("Welcome to Avalon\n")
+	match std.dial("tcp!localhost!7777")
+	| `std.Err e: std.put("Error connecting to server: {}\n", e)
+	| `std.Ok fd: start_client(fd)
+	;;
+}
+
+const start_client = {conn : std.fd
+	std.put("Connected to server!\n")
+	var stop = false
+	while !stop
+		match read_message(conn)
+		| `std.Err e: std.put("Error reading message: {}\n", e)
+			stop = true
+		| `std.Ok j: std.put("Read message: {}\n", j)
+		;;
+	;;
+}
+
+const read_message = {conn : std.fd -> std.result(json.elt#, byte[:])
+	var buf : byte[:] = std.slzalloc(1024)
+	match std.read(conn, buf)
+	| `std.Err e:
+		var errbuf = std.mksb()
+		_ = std.sbfmt(errbuf,"{}", e)
+		-> `std.Err std.sbfin(errbuf)
+	| `std.Ok n:
+		match json.parse(buf[:n])
+		| `std.Err err:
+        		var errbuf = std.mksb()
+        		_ = std.sbfmt(errbuf,"{}", err)
+        		-> `std.Err std.sbfin(errbuf)
+		| `std.Ok j:
+			-> `std.Ok j
+		;;
+	;;
+}
