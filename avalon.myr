@@ -1,5 +1,6 @@
 use std
 use json
+use sys
 
 const main = {
 	std.put("Welcome to Avalon\n")
@@ -10,19 +11,33 @@ const main = {
 }
 
 const start_client = {conn : std.fd
+	var pollfiles : sys.pollfd[:] = [
+		[ .fd = (conn : sys.fd), .events = sys.Pollin, .revents = 0 ],
+        	[ .fd = (std.In: sys.fd), .events = sys.Pollin, .revents = 0 ],
+	][:]
 	std.put("Connected to server!\n")
-	var stop = false
-	while !stop
-		match read_message(conn)
-		| `std.Err e: std.put("Error reading message: {}\n", e)
-			stop = true
-		| `std.Ok j: std.put("Read message: {}\n", j)
+	while sys.poll(pollfiles, -1) > 0
+		// watch the socket
+		if pollfiles[0].revents & sys.Pollin > 0
+        		match read_message(conn)
+        		| `std.Err e: std.put("Error reading message: {}\n", e)
+        		| `std.Ok j: std.put("Read message: {}\n", j)
+        		;;
+                ;;
+		// watch stdin
+		if pollfiles[1].revents & sys.Pollin > 0
+			match read_input((pollfiles[1].fd : std.fd))
+			| `std.Err _ :
+			| `std.Ok msg : std.put("Sending: {}\n", msg)
+			;;
 		;;
 	;;
 }
 
+const bufsize = 1024
+
 const read_message = {conn : std.fd -> std.result(json.elt#, byte[:])
-	var buf : byte[:] = std.slzalloc(1024)
+	var buf : byte[:] = std.slzalloc(bufsize)
 	match std.read(conn, buf)
 	| `std.Err e:
 		var errbuf = std.mksb()
@@ -37,5 +52,17 @@ const read_message = {conn : std.fd -> std.result(json.elt#, byte[:])
 		| `std.Ok j:
 			-> `std.Ok j
 		;;
+	;;
+}
+
+const read_input = {fd : std.fd -> std.result(byte[:], std.errno)
+	var buf : byte[:] = std.slzalloc(bufsize)
+	match std.read(fd, buf)
+	| `std.Err e: -> `std.Err e
+	| `std.Ok n:
+		if n == bufsize
+			std.put("Long message, splitting")
+		;;
+                -> `std.Ok buf[:n]
 	;;
 }
