@@ -27,6 +27,34 @@ type all_msg = struct
 
 type parse_err = byte[:]
 
+// borrowed from libjson
+const jstrfmt = {sb, str
+	std.sbputs(sb, "\"")
+	for c : str
+		match (c : char)
+		| '\x0c':	std.sbputs(sb, "\\f")
+		| '\\':	std.sbputs(sb, "\\\\")
+		| '\n': std.sbputs(sb, "\\n")
+		| '\r':	std.sbputs(sb, "\\r")
+		| '\t': std.sbputs(sb, "\\t")
+		| _:	std.sbputb(sb, c)
+		;;
+	;;
+	std.sbputs(sb, "\"")
+}
+
+// jsonify converts an all_msg into a json-encoded representation of itself.
+// It only support NEW and QUERY message types
+const jsonify = {m : all_msg -> byte[:]
+	var sb = std.mksb()
+        std.sbfmt(sb, "{{\"Type\": {},\"Parent\": \"{}\",\"UUID\": \"{}\",\"Username\": \"{}\",\"Timestamp\": {},\"Content\": ",
+        	m.msgtype, m.parent, m.uuid, m.username, m.timestamp)
+	jstrfmt(sb, m.content)
+	std.sbfmt(sb, "}}\n")
+	var s = std.sbfin(sb)
+	-> s
+}
+
 // unpack a parsed json message into a struct representing its contents
 const unpack = {parsed : json.elt# -> std.result(all_msg, parse_err)
 	match parsed#
@@ -68,6 +96,7 @@ const start_client = {conn : std.fd
         	[ .fd = (std.In: sys.fd), .events = sys.Pollin, .revents = 0 ],
 	][:]
 	var reply_to = ("" : msgid)
+	var reply : all_msg
 	std.put("Connected to server!\n")
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
@@ -79,7 +108,7 @@ const start_client = {conn : std.fd
 				| `std.Err e : std.put("Error unpacking message: {}\n", e)
 				| `std.Ok m :
 					match m.msgtype
-					| WelcomeType :
+					| WelcomeType : reply_to = m.root
 					| QueryType :
 					| NewType : std.put("{}: {}", m.username, m.content)
 						if m.content[m.content.len-1] != ('\n' : byte)
@@ -95,7 +124,14 @@ const start_client = {conn : std.fd
 		if pollfiles[1].revents & sys.Pollin > 0
 			match read_input((pollfiles[1].fd : std.fd))
 			| `std.Err _ :
-			| `std.Ok msg : std.put("Sending: {} in reply to {}\n", msg, reply_to)
+			| `std.Ok msg : 
+				reply.content = msg
+				reply.parent = reply_to
+				reply.msgtype = NewType
+				reply.uuid = ("" : msgid)
+				reply.username = "avalon"
+				reply.timestamp = (std.now() : int)
+				std.fput((pollfiles[0].fd : std.fd), "{}", jsonify(reply))
 			;;
 		;;
 	;;
