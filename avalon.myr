@@ -67,7 +67,7 @@ const start_client = {conn : std.fd
 		[ .fd = (conn : sys.fd), .events = sys.Pollin, .revents = 0 ],
         	[ .fd = (std.In: sys.fd), .events = sys.Pollin, .revents = 0 ],
 	][:]
-	var reply_to : byte[:] = ""
+	var reply_to = ("" : msgid)
 	std.put("Connected to server!\n")
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
@@ -85,6 +85,7 @@ const start_client = {conn : std.fd
 						if m.content[m.content.len-1] != ('\n' : byte)
 							std.put("\n")
 						;;
+						reply_to = m.uuid
 					| _ :
 					;;
 				;;
@@ -94,7 +95,7 @@ const start_client = {conn : std.fd
 		if pollfiles[1].revents & sys.Pollin > 0
 			match read_input((pollfiles[1].fd : std.fd))
 			| `std.Err _ :
-			| `std.Ok msg : std.put("Sending: {}\n", msg)
+			| `std.Ok msg : std.put("Sending: {} in reply to {}\n", msg, reply_to)
 			;;
 		;;
 	;;
