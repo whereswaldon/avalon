@@ -82,6 +82,9 @@ const start_client = {conn : std.fd
 					| WelcomeType :
 					| QueryType :
 					| NewType : std.put("{}: {}", m.username, m.content)
+						if m.content[m.content.len-1] != ('\n' : byte)
+							std.put("\n")
+						;;
 					| _ :
 					;;
 				;;
