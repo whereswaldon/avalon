@@ -10,18 +10,81 @@ const main = {
 	;;
 }
 
+type msgid = byte[:]
+
+type all_msg = struct
+    msgtype : int
+    major   : int
+    minor   : int
+    recent  : msgid[:]
+    root    : msgid
+    parent    : msgid
+    uuid      : msgid
+    content   : byte[:]
+    username  : byte[:]
+    timestamp : int
+;;
+
+type parse_err = byte[:]
+
+// unpack a parsed json message into a struct representing its contents
+const unpack = {parsed : json.elt# -> std.result(all_msg, parse_err)
+	match parsed#
+	| `json.Obj pairs :
+		var m : all_msg
+		for (key, value) : pairs
+  			match (key, value#)
+  			| ("Type", `json.Num n) : m.msgtype = (n : int)
+  			| ("Root", `json.Str s) : m.root = (s : msgid)
+  			| ("Parent", `json.Str p) : m.parent = (p : msgid)
+  			| ("Content", `json.Str c) : m.content = c
+  			| ("Username", `json.Str u) : m.username = u
+  			| ("UUID", `json.Str i) : m.uuid = (i : msgid)
+  			| ("Major", `json.Num n) : m.major= (n : int)
+  			| ("Minor", `json.Num n) : m.minor = (n : int)
+  			| ("Timestamp", `json.Num n) : m.timestamp = (n : int)
+			| ("Recent", `json.Arr a) :
+				var ids : msgid[:] = std.slzalloc(a.len)
+				var index = 0
+				for &(`json.Str s) : a
+                                    ids[index++] = (s : msgid)
+        			;;
+				m.recent = ids
+  			| _ : //todo
+  			;;
+		;;
+        	-> `std.Ok m
+	| _ : -> `std.Err ("Invalid protocol message, json root is not an object" : parse_err)
+	;;
+}
+
+const WelcomeType = 0
+const QueryType = 1
+const NewType = 2
+
 const start_client = {conn : std.fd
 	var pollfiles : sys.pollfd[:] = [
 		[ .fd = (conn : sys.fd), .events = sys.Pollin, .revents = 0 ],
         	[ .fd = (std.In: sys.fd), .events = sys.Pollin, .revents = 0 ],
 	][:]
+	var reply_to : byte[:] = ""
 	std.put("Connected to server!\n")
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
 		if pollfiles[0].revents & sys.Pollin > 0
         		match read_message(conn)
         		| `std.Err e: std.put("Error reading message: {}\n", e)
-        		| `std.Ok j: std.put("Read message: {}\n", j)
+        		| `std.Ok j:
+				match unpack(j)
+				| `std.Err e : std.put("Error unpacking message: {}\n", e)
+				| `std.Ok m :
+					match m.msgtype
+					| WelcomeType :
+					| QueryType :
+					| NewType : std.put("{}: {}", m.username, m.content)
+					| _ :
+					;;
+				;;
         		;;
                 ;;
 		// watch stdin
