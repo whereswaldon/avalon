@@ -101,8 +101,8 @@ const start_client = {conn : std.fd
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
 		if pollfiles[0].revents & sys.Pollin > 0
-        		match next_message(conn)
-                        | `std.Err e : std.put("Error in next_message: {}\n", e)
+        		match recv_message(conn)
+                        | `std.Err e : std.put("Error in recv_message: {}\n", e)
                         | `std.Ok m :
                             match m.msgtype
                             | WelcomeType : reply_to = m.root
@@ -127,7 +127,10 @@ const start_client = {conn : std.fd
 				reply.uuid = ("" : msgid)
 				reply.username = "avalon"
 				reply.timestamp = (std.now() : int)
-				std.fput((pollfiles[0].fd : std.fd), "{}", jsonify(reply))
+				match send_message((pollfiles[0].fd : std.fd), reply)
+				| `std.Some e : std.put("Error sending message: {}\n", e)
+				| _:
+				;;
 			;;
 		;;
 	;;
@@ -166,7 +169,16 @@ const read_input = {fd : std.fd -> std.result(byte[:], std.errno)
 	;;
 }
 
-const next_message = {fd : std.fd -> std.result(all_msg, byte[:])
+const send_message = {fd : std.fd, m : all_msg -> std.option(byte[:])
+	var encoded = jsonify(m)
+	var written = std.fput(fd, "{}", encoded)
+	if written < encoded.len
+		-> `std.Some "Failed to write all of message"
+	;;
+	-> `std.None
+}
+
+const recv_message = {fd : std.fd -> std.result(all_msg, byte[:])
     match read_message(fd)
     | `std.Err e: -> `std.Err std.fmt("Error reading message: {}\n", e)
     | `std.Ok j:
