@@ -101,25 +101,21 @@ const start_client = {conn : std.fd
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
 		if pollfiles[0].revents & sys.Pollin > 0
-        		match read_message(conn)
-        		| `std.Err e: std.put("Error reading message: {}\n", e)
-        		| `std.Ok j:
-				match unpack(j)
-				| `std.Err e : std.put("Error unpacking message: {}\n", e)
-				| `std.Ok m :
-					match m.msgtype
-					| WelcomeType : reply_to = m.root
-					| QueryType :
-					| NewType : std.put("{}: {}", m.username, m.content)
-						if m.content[m.content.len-1] != ('\n' : byte)
-							std.put("\n")
-						;;
-						reply_to = m.uuid
-					| _ :
-					;;
-				;;
-        		;;
-                ;;
+        		match next_message(conn)
+                        | `std.Err e : std.put("Error in next_message: {}\n", e)
+                        | `std.Ok m :
+                            match m.msgtype
+                            | WelcomeType : reply_to = m.root
+                            | QueryType :
+                            | NewType : std.put("{}: {}", m.username, m.content)
+                                if m.content[m.content.len-1] != ('\n' : byte)
+                                    std.put("\n")
+                                ;;
+                                reply_to = m.uuid
+                            | _ :
+                            ;;
+                        ;;
+    		;;
 		// watch stdin
 		if pollfiles[1].revents & sys.Pollin > 0
 			match read_input((pollfiles[1].fd : std.fd))
@@ -168,4 +164,15 @@ const read_input = {fd : std.fd -> std.result(byte[:], std.errno)
 		;;
                 -> `std.Ok buf[:n]
 	;;
+}
+
+const next_message = {fd : std.fd -> std.result(all_msg, byte[:])
+    match read_message(fd)
+    | `std.Err e: -> `std.Err std.fmt("Error reading message: {}\n", e)
+    | `std.Ok j:
+        match unpack(j)
+        | `std.Err e : -> `std.Err std.fmt("Error unpacking message: {}\n", e)
+        | `std.Ok m : -> `std.Ok m
+        ;;
+    ;;
 }
