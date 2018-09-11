@@ -12,6 +12,12 @@ const main = {
 	;;
 }
 
+const WelcomeType = 0
+const QueryType = 1
+const NewType = 2
+
+const bufsize = 1024
+
 type msgid = byte[:]
 
 type all_msg = struct
@@ -34,6 +40,61 @@ type client = struct
 	stdin : std.fd
 	sock : std.fd
 ;;
+
+const start_client = {c : client#
+	var pollfiles : sys.pollfd[:] = [
+		[ .fd = (c.sock : sys.fd), .events = sys.Pollin, .revents = 0 ],
+        	[ .fd = (c.stdin: sys.fd), .events = sys.Pollin, .revents = 0 ],
+	][:]
+	var reply : all_msg
+	std.put("Connected to server!\n")
+	while sys.poll(pollfiles, -1) > 0
+		// watch the socket
+		if pollfiles[0].revents & sys.Pollin > 0
+			handle_read_socket(c)
+    		;;
+		// watch stdin
+		if pollfiles[1].revents & sys.Pollin > 0
+			handle_read_stdin(c)
+		;;
+	;;
+}
+
+// handle_read_socket reads a new JSON message off of a socket and processes it
+const handle_read_socket = {c : client#
+    match recv_message(c.sock)
+    | `std.Err e : std.put("Error in recv_message: {}\n", e)
+    | `std.Ok m :
+        match m.msgtype
+        | WelcomeType : c.reply_to = m.root
+        | QueryType :
+        | NewType : std.put("{}: {}", m.username, m.content)
+            if m.content[m.content.len-1] != ('\n' : byte)
+                std.put("\n")
+            ;;
+            c.reply_to = m.uuid
+        | _ :
+        ;;
+    ;;
+}
+
+// handle_read_stdin reads a line of input from the user and sends it as a message
+const handle_read_stdin = {c : client#
+    match read_input((c.stdin : std.fd))
+    | `std.Err e : std.put("Error reading from stdin: {}\n", e)
+    | `std.Ok msg : 
+        reply.content = msg
+        reply.parent = c.reply_to
+        reply.msgtype = NewType
+        reply.uuid = ("" : msgid)
+        reply.username = "avalon"
+        reply.timestamp = (std.now() : int)
+        match send_message((pollfiles[0].fd : std.fd), reply)
+        | `std.Some e : std.put("Error sending message: {}\n", e)
+        | _:
+        ;;
+    ;;
+}
 
 // borrowed from libjson
 const jstrfmt = {sb, str
@@ -93,62 +154,6 @@ const unpack = {parsed : json.elt# -> std.result(all_msg, parse_err)
 	| _ : -> `std.Err ("Invalid protocol message, json root is not an object" : parse_err)
 	;;
 }
-
-const WelcomeType = 0
-const QueryType = 1
-const NewType = 2
-
-const start_client = {c : client#
-	var pollfiles : sys.pollfd[:] = [
-		[ .fd = (c.sock : sys.fd), .events = sys.Pollin, .revents = 0 ],
-        	[ .fd = (c.stdin: sys.fd), .events = sys.Pollin, .revents = 0 ],
-	][:]
-	var reply : all_msg
-	std.put("Connected to server!\n")
-	while sys.poll(pollfiles, -1) > 0
-		// watch the socket
-		if pollfiles[0].revents & sys.Pollin > 0
-			handle_read_socket(c)
-    		;;
-		// watch stdin
-		if pollfiles[1].revents & sys.Pollin > 0
-			match read_input((c.stdin : std.fd))
-			| `std.Err e : std.put("Error reading from stdin: {}\n", e)
-			| `std.Ok msg : 
-				reply.content = msg
-				reply.parent = c.reply_to
-				reply.msgtype = NewType
-				reply.uuid = ("" : msgid)
-				reply.username = "avalon"
-				reply.timestamp = (std.now() : int)
-				match send_message((pollfiles[0].fd : std.fd), reply)
-				| `std.Some e : std.put("Error sending message: {}\n", e)
-				| _:
-				;;
-			;;
-		;;
-	;;
-}
-
-// handle_read_socket reads a new JSON message off of a socket and processes it
-const handle_read_socket = {c : client#
-    match recv_message(c.sock)
-    | `std.Err e : std.put("Error in recv_message: {}\n", e)
-    | `std.Ok m :
-        match m.msgtype
-        | WelcomeType : c.reply_to = m.root
-        | QueryType :
-        | NewType : std.put("{}: {}", m.username, m.content)
-            if m.content[m.content.len-1] != ('\n' : byte)
-                std.put("\n")
-            ;;
-            c.reply_to = m.uuid
-        | _ :
-        ;;
-    ;;
-}
-
-const bufsize = 1024
 
 // read_json attempts to read a json object off of the provided file
 // descriptor.
