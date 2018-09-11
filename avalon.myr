@@ -6,7 +6,9 @@ const main = {
 	std.put("Welcome to Avalon\n")
 	match std.dial("tcp!localhost!7777")
 	| `std.Err e: std.put("Error connecting to server: {}\n", e)
-	| `std.Ok fd: start_client(fd)
+	| `std.Ok fd: 
+            var client = [.stdin = std.In, .sock = fd, .reply_to = ("" : msgid)]
+            start_client(&client)
 	;;
 }
 
@@ -26,6 +28,12 @@ type all_msg = struct
 ;;
 
 type parse_err = byte[:]
+
+type client = struct 
+	reply_to : msgid
+	stdin : std.fd
+	sock : std.fd
+;;
 
 // borrowed from libjson
 const jstrfmt = {sb, str
@@ -90,39 +98,25 @@ const WelcomeType = 0
 const QueryType = 1
 const NewType = 2
 
-const start_client = {conn : std.fd
+const start_client = {c : client#
 	var pollfiles : sys.pollfd[:] = [
-		[ .fd = (conn : sys.fd), .events = sys.Pollin, .revents = 0 ],
-        	[ .fd = (std.In: sys.fd), .events = sys.Pollin, .revents = 0 ],
+		[ .fd = (c.sock : sys.fd), .events = sys.Pollin, .revents = 0 ],
+        	[ .fd = (c.stdin: sys.fd), .events = sys.Pollin, .revents = 0 ],
 	][:]
-	var reply_to = ("" : msgid)
 	var reply : all_msg
 	std.put("Connected to server!\n")
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
 		if pollfiles[0].revents & sys.Pollin > 0
-        		match recv_message(conn)
-                        | `std.Err e : std.put("Error in recv_message: {}\n", e)
-                        | `std.Ok m :
-                            match m.msgtype
-                            | WelcomeType : reply_to = m.root
-                            | QueryType :
-                            | NewType : std.put("{}: {}", m.username, m.content)
-                                if m.content[m.content.len-1] != ('\n' : byte)
-                                    std.put("\n")
-                                ;;
-                                reply_to = m.uuid
-                            | _ :
-                            ;;
-                        ;;
+			handle_read_socket(c)
     		;;
 		// watch stdin
 		if pollfiles[1].revents & sys.Pollin > 0
-			match read_input((pollfiles[1].fd : std.fd))
-			| `std.Err _ :
+			match read_input((c.stdin : std.fd))
+			| `std.Err e : std.put("Error reading from stdin: {}\n", e)
 			| `std.Ok msg : 
 				reply.content = msg
-				reply.parent = reply_to
+				reply.parent = c.reply_to
 				reply.msgtype = NewType
 				reply.uuid = ("" : msgid)
 				reply.username = "avalon"
@@ -136,9 +130,29 @@ const start_client = {conn : std.fd
 	;;
 }
 
+// handle_read_socket reads a new JSON message off of a socket and processes it
+const handle_read_socket = {c : client#
+    match recv_message(c.sock)
+    | `std.Err e : std.put("Error in recv_message: {}\n", e)
+    | `std.Ok m :
+        match m.msgtype
+        | WelcomeType : c.reply_to = m.root
+        | QueryType :
+        | NewType : std.put("{}: {}", m.username, m.content)
+            if m.content[m.content.len-1] != ('\n' : byte)
+                std.put("\n")
+            ;;
+            c.reply_to = m.uuid
+        | _ :
+        ;;
+    ;;
+}
+
 const bufsize = 1024
 
-const read_message = {conn : std.fd -> std.result(json.elt#, byte[:])
+// read_json attempts to read a json object off of the provided file
+// descriptor.
+const read_json = {conn : std.fd -> std.result(json.elt#, byte[:])
 	var buf : byte[:] = std.slzalloc(bufsize)
 	match std.read(conn, buf)
 	| `std.Err e:
@@ -157,6 +171,7 @@ const read_message = {conn : std.fd -> std.result(json.elt#, byte[:])
 	;;
 }
 
+// read_input attempts to read text from stdin
 const read_input = {fd : std.fd -> std.result(byte[:], std.errno)
 	var buf : byte[:] = std.slzalloc(bufsize)
 	match std.read(fd, buf)
@@ -169,6 +184,7 @@ const read_input = {fd : std.fd -> std.result(byte[:], std.errno)
 	;;
 }
 
+// send_message writes the wire format of the message `m` into the provide file descriptor
 const send_message = {fd : std.fd, m : all_msg -> std.option(byte[:])
 	var encoded = jsonify(m)
 	var written = std.fput(fd, "{}", encoded)
@@ -178,8 +194,9 @@ const send_message = {fd : std.fd, m : all_msg -> std.option(byte[:])
 	-> `std.None
 }
 
+// recv_message attempts to read a message from a file descriptor
 const recv_message = {fd : std.fd -> std.result(all_msg, byte[:])
-    match read_message(fd)
+    match read_json(fd)
     | `std.Err e: -> `std.Err std.fmt("Error reading message: {}\n", e)
     | `std.Ok j:
         match unpack(j)
