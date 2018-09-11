@@ -77,11 +77,13 @@ const handle_read_socket = {c : client#
         match m.msgtype
         | WelcomeType : c.reply_to = m.root
         | QueryType :
-        | NewType : std.put("{}: {}", m.username, m.content)
-            if m.content[m.content.len-1] != ('\n' : byte)
+        | NewType : std.put("{p=0,w=4,x} {}: {}", c.local_max,  m.username, m.content)
+            if m.content.len == 0 || m.content[m.content.len-1] != ('\n' : byte)
                 std.put("\n")
             ;;
 	    std.htput(c.store, (m.uuid : byte[:]), m)
+	    c.locals = std.slpush(&c.locals, (m.uuid : byte[:]))
+            c.local_max++
             c.reply_to = m.uuid
         | _ :
         ;;
