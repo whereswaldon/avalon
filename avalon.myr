@@ -7,7 +7,7 @@ const main = {
 	match std.dial("tcp!localhost!7777")
 	| `std.Err e: std.put("Error connecting to server: {}\n", e)
 	| `std.Ok fd: 
-            var client = [.stdin = std.In, .sock = fd, .reply_to = ("" : msgid)]
+            var client = [.stdin = std.In, .sock = fd, .reply_to = ("" : msgid), .store = std.mkht()]
             start_client(&client)
 	;;
 }
@@ -36,6 +36,7 @@ type all_msg = struct
 type parse_err = byte[:]
 
 type client = struct 
+	store : std.htab(byte[:], all_msg#)#
 	reply_to : msgid
 	stdin : std.fd
 	sock : std.fd
@@ -46,7 +47,6 @@ const start_client = {c : client#
 		[ .fd = (c.sock : sys.fd), .events = sys.Pollin, .revents = 0 ],
         	[ .fd = (c.stdin: sys.fd), .events = sys.Pollin, .revents = 0 ],
 	][:]
-	var reply : all_msg
 	std.put("Connected to server!\n")
 	while sys.poll(pollfiles, -1) > 0
 		// watch the socket
@@ -80,7 +80,8 @@ const handle_read_socket = {c : client#
 
 // handle_read_stdin reads a line of input from the user and sends it as a message
 const handle_read_stdin = {c : client#
-    match read_input((c.stdin : std.fd))
+    var reply : all_msg
+    match read_input(c.stdin)
     | `std.Err e : std.put("Error reading from stdin: {}\n", e)
     | `std.Ok msg : 
         reply.content = msg
@@ -89,7 +90,7 @@ const handle_read_stdin = {c : client#
         reply.uuid = ("" : msgid)
         reply.username = "avalon"
         reply.timestamp = (std.now() : int)
-        match send_message((pollfiles[0].fd : std.fd), reply)
+        match send_message(c.sock, reply)
         | `std.Some e : std.put("Error sending message: {}\n", e)
         | _:
         ;;
@@ -125,10 +126,10 @@ const jsonify = {m : all_msg -> byte[:]
 }
 
 // unpack a parsed json message into a struct representing its contents
-const unpack = {parsed : json.elt# -> std.result(all_msg, parse_err)
+const unpack = {parsed : json.elt# -> std.result(all_msg#, parse_err)
 	match parsed#
 	| `json.Obj pairs :
-		var m : all_msg
+		var m : all_msg# = std.alloc()
 		for (key, value) : pairs
   			match (key, value#)
   			| ("Type", `json.Num n) : m.msgtype = (n : int)
@@ -200,7 +201,7 @@ const send_message = {fd : std.fd, m : all_msg -> std.option(byte[:])
 }
 
 // recv_message attempts to read a message from a file descriptor
-const recv_message = {fd : std.fd -> std.result(all_msg, byte[:])
+const recv_message = {fd : std.fd -> std.result(all_msg#, byte[:])
     match read_json(fd)
     | `std.Err e: -> `std.Err std.fmt("Error reading message: {}\n", e)
     | `std.Ok j:
