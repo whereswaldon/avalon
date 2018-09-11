@@ -7,7 +7,14 @@ const main = {
 	match std.dial("tcp!localhost!7777")
 	| `std.Err e: std.put("Error connecting to server: {}\n", e)
 	| `std.Ok fd: 
-            var client = [.stdin = std.In, .sock = fd, .reply_to = ("" : msgid), .store = std.mkht()]
+            var client = [
+		.stdin = std.In,
+		.sock = fd,
+		.reply_to = ("" : msgid),
+		.local_max = 0,
+		.locals = std.slalloc(bufsize),
+		.store = std.mkht(),
+            ]
             start_client(&client)
 	;;
 }
@@ -37,6 +44,8 @@ type parse_err = byte[:]
 
 type client = struct 
 	store : std.htab(byte[:], all_msg#)#
+	locals : byte[:][:]
+        local_max : int
 	reply_to : msgid
 	stdin : std.fd
 	sock : std.fd
@@ -72,6 +81,7 @@ const handle_read_socket = {c : client#
             if m.content[m.content.len-1] != ('\n' : byte)
                 std.put("\n")
             ;;
+	    std.htput(c.store, (m.uuid : byte[:]), m)
             c.reply_to = m.uuid
         | _ :
         ;;
